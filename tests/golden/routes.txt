@@ -1,0 +1,26 @@
+#2031  WH-NJ    zone 1
+#2032  WH-GA    zone 1
+#2033  PARTNER  ZIP_NOT_COVERED (prefix 213)
+#2034  WH-GA    zone 5 (tie rule 5: cover WH-GA 10.00d > WH-NJ 0.10d)
+#2035  WH-GA    zone 4
+#2036  WH-NV    zone 2
+#2037  PARTNER  INTERNATIONAL (country CA)
+#2038  WH-NV    zone 4
+#2039  WH-NJ    zone 1
+#2040  WH-GA    zone 5
+#2041  WH-GA    zone 7
+#2042  PARTNER  ZIP_NOT_COVERED (prefix 968)
+#2043  WH-NV    zone 3
+#2044  WH-GA    zone 6
+#2045  WH-GA    zone 3
+#2046  PARTNER  NO_ZIP (missing)
+#2047  WH-GA    zone 4
+#2048  WH-NJ    zone 5 (tie rule 5: cover WH-NJ 9.97d > WH-GA 0.03d)
+#2049  WH-GA    zone 4
+#2050  WH-NJ    zone 5
+#2051  WH-NV    zone 2
+#2052  WH-NV    zone 5
+#2053  WH-NJ    zone 2
+#2054  WH-GA    zone 4
+#2055  WH-GA    zone 8 (tie rule 5: cover WH-GA 11.76d > WH-NJ 3.97d)
+#2056  WH-GA    zone 5
