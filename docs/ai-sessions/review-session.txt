@@ -1,0 +1,701 @@
+ ▐▛███▛█   Claude Code v2.1.309
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~\Desktop\raicom_test
+
+
+❯ You will review the code in this directory, read instructions.md for the task 
+  and the rules, all the decisions made are in docs/decisions.md. Review this   
+  code like you would have to approve it for production (because you are) so be 
+  detail oriented.focus on bugs and anything that doesn't match the rules or    
+  the decisions, not style. also tell me if a rule or decision could break      
+  without any test failing. before opening routes.txt, work out by hand where   
+  2033, 2037, 2040, 2041, 2045, 2050 and 2051 should go using the files in      
+  data/, then compare with routes.txt. don't change any file, I'll decide what  
+  to fix. for each problem tell me the file and line and an input that breaks   
+  it.                                                                           
+
+  Ran 1 shell command, recalled 1 memory (ctrl+o to expand)
+
+● Hand computation done (in my head, from data/). Now reading the source.
+
+  Read 1 file, ran 4 shell commands (ctrl+o to expand)
+
+● My hand-worked results match the plan's table. Now comparing with routes.txt
+  and running the suite.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Hand results for all 7 orders match routes.txt. Now probing the suspected bugs
+  with scratch scripts (nothing in the repo is written; I'm not running main.ts
+  since it rewrites routes.txt).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Confirmed several issues. Now checking the TZ effect on an actual route, the
+  crash thresholds, and a mutation run (on a scratch copy) to prove which
+  decisions no test protects.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Now the mutation run on a scratch copy of the repo.
+
+  Ran 2 shell commands, wrote 1 memory (ctrl+o to expand)
+
+● I didn't change any file in the repo. My scratch scripts are in
+  C:\Users\j\AppData\Local\Temp\claude\C--Users-j-Desktop-raicom-test\7402bd91-d
+  211-4457-b778-c7d962864410\scratchpad. I didn't run main.ts because it
+  rewrites routes.txt. Instead I called routeOrders and formatRoutes directly,
+  and the result is byte-identical to the current routes.txt. All 18 tests pass
+  and tsc reports no errors.
+
+  1. The 7 orders, worked out by hand before opening routes.txt
+
+  Order: #2033
+  How I got there: ZIP is the number 2134, so the prefix is "213" (D-01: no
+  padding). 213 isn't in zones.json.
+  Expected: PARTNER ZIP_NOT_COVERED (prefix 213)
+  routes.txt: ✅
+  ────────────────────────────────────────
+  Order: #2037
+  How I got there: country is CA, so rule 1 applies
+  Expected: PARTNER INTERNATIONAL
+  routes.txt: ✅
+  ────────────────────────────────────────
+  Order: #2040
+  How I got there: Prefix 100, bundle = VITD 1 + MAG 1. NJ is zone 2 but its MAG
+
+  is 0 after #2039 took both units. GA is zone 5 with VITD 3 and MAG 149.
+  Expected: WH-GA zone 5
+  routes.txt: ✅
+  ────────────────────────────────────────
+  Order: #2041
+  How I got there: Prefix 891, VITD 1 plus MULTI 1 from the edit 18 minutes
+  later
+  (inside the window). NV is zone 2 but has no MULTI. GA is zone 7 and NJ zone
+  8, so GA.
+  Expected: WH-GA zone 7
+  routes.txt: ✅
+  ────────────────────────────────────────
+  Order: #2045
+  How I got there: nw-mag-90 becomes NW-MAG-90 (D-03). Prefix 282: GA is zone 3
+  with MAG 148.
+  Expected: WH-GA zone 3
+  routes.txt: ✅
+  ────────────────────────────────────────
+  Order: #2050
+  How I got there: Prefix 303, VITD 2. GA is zone 1 but has only 1 VITD left
+  (#2035, #2040 and #2041 took 3). Next is NJ zone 5 (TX is zone 4 but
+  disabled).
+  Expected: WH-NJ zone 5
+  routes.txt: ✅
+  ────────────────────────────────────────
+  Order: #2051
+  How I got there: Prefix 891, VITD 1. NV is zone 2 with VITD 199.
+  Expected: WH-NV zone 2
+  routes.txt: ✅
+
+  The other 19 lines also match my hand calculation and the table in
+  implementation-plan.md §3.
+
+  2. Bugs and mismatches with the rules or decisions (most serious first)
+
+  1. Invalid orders never print a stderr warning. This breaks D-00 ("plus a
+     warning on stderr") and D-18 ("with a stderr detail").
+     - Where: src/route.ts:25. routeOrder has no warn parameter, and
+       src/router.ts:16 doesn't pass one.
+     - Input that breaks it: a line with "quantity": "2", or a creation with
+       "at": "garbage". The order goes to PARTNER INVALID_ORDER with warnings: 
+       [] (I confirmed this).
+  2. Routing depends on the machine's timezone.
+     - Where: src/orders.ts:124. Date.parse reads a timestamp with no offset as
+       local time. F-11 allows this, so the hole is in the decision.
+     - Input that breaks it: an order created at "2026-10-20T13:00:00.000Z" with
+       an edit at "2026-10-20T13:20:00" (no Z) that adds a SKU only WH-GA has.
+       - With TZ=UTC the edit is merged and the order goes to WH-GA.
+       - On your machine (UTC−3) the edit is read as 16:20Z, falls outside the
+         window, and the order goes to WH-NJ.
+     - The parser is also very lenient: "1" parses as the year 2001.
+  3. Duplicate JSON keys are silently resolved as "last one wins".
+     - Where: src/main.ts:13. JSON.parse drops the earlier copy before D-22 ever
+       sees it.
+     - This breaks the D-22 duplicate rule (drop both and warn), which only
+       catches keys that differ in case.
+     - It also breaks F-06 ("the first one wins") for zones keys.
+     - Input that breaks it: "inventory": {"X": {"available": 0, ...}, "X": 
+       {"available": 50, ...}}. The warehouse gets 50 units and there's no
+       warning.
+  4. When the run stops, all the warnings explaining why are lost.
+     - Where: src/router.ts:11-13 builds the warnings, and the throw at
+       src/network.ts:116 skips past them. src/main.ts:36-39 prints only the
+       error.
+     - Input that breaks it: every warehouse has "enabled": "true" (a string).
+       You only see "no usable warehouse" and none of the "non-boolean enabled"
+       warnings.
+  5. D-18 is applied inconsistently to empty line lists.
+     - Where: src/orders.ts:56-57 and :98. The empty check runs only after edits
+       are merged.
+     - D-18 puts "lines missing / not an array / empty" in the same row, but the
+       code treats them differently:
+       - lines: [] plus an in-window edit gets routed to a warehouse.
+       - lines missing plus the same edit goes to INVALID_ORDER.
+  6. The run crashes on large inputs, which breaks D-00 ("never crash", order 
+     events are unbounded).
+     - src/format.ts:7-8: the Math.max(...routes) spread crashes at about 125k
+       orders with RangeError. 100k still works.
+     - src/orders.ts:87: push(...addedLines) crashes the same way on an edit
+       with about 150k lines.
+  7. "Identical" means different things in different places (D-22).
+     - Where: src/catalog.ts:57-58 and src/network.ts:42-43 compare the raw
+       entries, before normalization. src/network.ts:76 compares inventory lines
+       after normalization.
+     - Inputs:
+       - Products {sku:"X"} and {sku:"x"} make X an INVALID_CATALOG_ITEM.
+       - Two warehouses with identical content but codes WH-NJ and wh-nj are
+         both disabled.
+       - The same pattern inside one inventory keeps one line ("identical").
+  8. "bundles": null is treated as "missing".
+     - Where: src/catalog.ts:54 (the ?? operator).
+     - F-05 says a bundles value that is present but not an array stops the run.
+       With null, the run continues and bundle orders go out as UNKNOWN_SKU.
+  9. A stopped run leaves the old routes.txt in place.
+     - Where: src/main.ts:31, which is only reached on success.
+     - Input that breaks it: delete data/zones.json and run. The run stops
+       correctly, but the routes.txt from the last good run is still there and
+       looks current.
+  10. A data file with a UTF-8 BOM stops the whole run.
+      - Where: src/main.ts:13.
+      - This follows D-22 ("not valid JSON"), but PowerShell 5.1's
+        Set-Content/Out-File -Encoding utf8 writes a BOM. On this machine,
+        editing a data file that way stops every run.
+
+  Document inconsistency: docs/test-plan.md:23 (R1-7) says USA and United States
+  are INTERNATIONAL ("no aliases"). That contradicts D-06. Anyone who
+  implements the test plan as written would write a test against the decision.
+
+  3. Rules and decisions that could break without any test failing
+
+  I read all 18 tests. I also tried to prove this with a mutation run (mutating
+  a scratch copy and re-running vitest), but the permission check denied that
+  Bash command. I didn't work around it, so the list below comes from reading
+  the tests rather than running them.
+
+  - No golden test on the real data (ACC-1). Nothing protects the 26 lines in
+    routes.txt. Today the check is a manual diff.
+  - D-01: padding the numeric ZIP (which would flip #2033) or stringifying [100]
+    would pass every test.
+  - D-03: removing toUpperCase would pass. #2045 would silently become
+    UNKNOWN_SKU.
+  - D-06: country aliases and NO_COUNTRY have no tests.
+  - D-09: removing the summing across lines passes, because no test repeats a
+    SKU.
+  - D-10: computing cover after the order's own quantity passes, because the
+    rule-5 test gives the same winner either way.
+  - D-11: treating velocity 0 as cover 0 passes, because every fixture uses
+    velocity 1.
+  - Rule 6: swapping NV and TX in PRIORITY passes. Only NJ vs GA is tested.
+  - D-08: limiting covers() to enabled warehouses passes.
+  - D-02 nested/invalid bundles, D-05, D-13 (equal timestamps, unreadable at), 
+    D-14 (edit before creation, unparseable, unknown order), D-18, D-19, D-20, 
+    D-21, D-22, F-06: none of these has a test.
+  - D-15 / format.ts: no tests at all. Decimals, >/=, inf and column alignment
+    can all change silently.
+  - Covered today: rules 1, 3, 4, 5, 6 (NJ > GA) and 7, bundle expansion and
+    reservation, the inclusive 30:00 edit window, slot timing, and the stock
+    check where available equals the quantity.
+
+  I saved these findings to memory so a later session can pick up whichever
+  fixes you choose.
+
+  ---
+
+  English notes
+  - "Review this code like you would have to approve it" → "Review this code as 
+    if you had to approve it". For an imagined situation, use as if with the
+    past tense; like sounds informal there.
+  - "the task and the rules, all the decisions made are in…" → "the task and the
+    rules**;** all the decisions are in…". Two full sentences joined by a comma
+    is a comma splice; use a semicolon or a period.
+  - Start a sentence with a capital letter after a period: "Focus on…", "Also
+    tell me…", "Don't change…". "detail oriented" is usually written
+    "detail-oriented".
+  - Well done: "work out by hand" is a natural phrasal verb, and "I'll decide
+    what to fix" is exactly how a native speaker would say it.
+
+✻ Baked for 5m 32s · done 17:16
+
+※ recap: I reviewed the order router for production: routes.txt matches my hand calculation for all 26 orders, but I found about 10 bugs or mismatches with the decisions, and gaps where most decisions have no test. Next, you choose which fixes to make. (disable recaps in /config)
+
+❯ the other session fixed some of the things you found. check that the fixes    
+  are right and didn't break anything else, and report anything new. just like  
+  before, don't change any code. And just like before: Review this code like    
+  you would have to approve it for production (because you are) so be detail    
+  oriented.focus on bugs and anything that doesn't match the rules or the       
+  decisions, not style. also tell me if a rule or decision could break without  
+  any test failing. before opening routes.txt, work out by hand where 2033,     
+  2037, 2040, 2041, 2045, 2050 and 2051 should go using the files in data/,     
+  then compare with routes.txt.                                                 
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+● Data files are older than my previous review (16:41 vs 17:11), but I'll
+  re-verify them before redoing the hand calculation.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Data is unchanged. decisions.md did change, and the hand calculation depends
+  on it, so I'm reading that next.
+
+  Read 1 file (ctrl+o to expand)
+
+● None of the decision changes affect today's data, so my hand-computed results
+  for orders #2033–#2051 match what I had before. Now I'll read the changed
+  code.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The changed source files are errors, router, main, orders and catalog. I'm
+  reading the new tests next, but I'll keep the golden file closed until I've
+  opened routes.txt, since it's the same content.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The BOM regex really does contain U+FEFF (bytes EF BB BF). Git also warned
+  about line endings, so I'm checking that alongside routes.txt.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 7 match my hand results, and routes.txt is byte-identical to the golden
+  file. 41/41 tests pass and tsc exits 0. Next I'm probing the fixes, again on
+  scratch copies only.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Running the CLI copy was denied, so I won't retry that. I'll instead verify
+  main.ts by reading it, then test the golden file's line-ending risk in a
+  throwaway scratchpad repo.
+
+  Ran 1 shell command, wrote 1 memory (ctrl+o to expand)
+
+● The fixes are correct and nothing in today's output changed, but I found four
+  new problems. The worst is the line-ending one (problem 1), which will break
+  the main acceptance test on a fresh checkout. I didn't change any repo code.
+  Two of my checks were blocked by the permission check, so I didn't retry them:
+  - running a copy of main.ts in the scratchpad;
+  - git init in the scratchpad.
+
+  So the BOM and stale-file behavior is checked by reading the code only, the
+  same limit the other session noted in K-05.
+
+  1. The 7 orders, worked out before opening routes.txt
+
+  The data files haven't changed since my last review (I re-read them). The new
+  decisions (F-05, F-11, F-13, F-14) don't affect today's data: every timestamp
+  has a Z, no order has empty lines, and bundles is an array. So I expected the
+  same results as before.
+
+  ┌───────┬─────────────────────────────────────────────────────┬────────────┐
+  │ Order │                 Expected (by hand)                  │ routes.txt │
+  ├───────┼─────────────────────────────────────────────────────┼────────────┤
+  │ #2033 │ PARTNER ZIP_NOT_COVERED (prefix 213)                │ ✅         │
+  ├───────┼─────────────────────────────────────────────────────┼────────────┤
+  │ #2037 │ PARTNER INTERNATIONAL (country CA)                  │ ✅         │
+  ├───────┼─────────────────────────────────────────────────────┼────────────┤
+  │ #2040 │ WH-GA zone 5                                        │ ✅         │
+  ├───────┼─────────────────────────────────────────────────────┼────────────┤
+  │ #2041 │ WH-GA zone 7 (the edit 13:48:37.000Z still passes   │ ✅         │
+  │       │ the new F-11 check)                                 │            │
+  ├───────┼─────────────────────────────────────────────────────┼────────────┤
+  │ #2045 │ WH-GA zone 3                                        │ ✅         │
+  ├───────┼─────────────────────────────────────────────────────┼────────────┤
+  │ #2050 │ WH-NJ zone 5                                        │ ✅         │
+  ├───────┼─────────────────────────────────────────────────────┼────────────┤
+  │ #2051 │ WH-NV zone 2                                        │ ✅         │
+  └───────┴─────────────────────────────────────────────────────┴────────────┘
+
+  All 26 lines still match my first hand calculation, and
+  tests/golden/routes.txt is byte-identical to routes.txt. 41/41 tests pass and
+  tsc exits 0.
+
+  2. The fixes are correct
+
+  Fix: F-13: warnings for PARTNER routes caused by bad data (router.ts:30-32)
+  How I checked it: Probe: bad quantity, unreadable at, unknown SKU, missing
+  country
+  Result: ✅ Each one warns. INTERNATIONAL doesn't.
+  ────────────────────────────────────────
+  Fix: F-11: timestamps need an offset (orders.ts:8, 127)
+  How I checked it: Probe
+  Result: ✅ Timestamps without an offset, "1", and +0000 are rejected.
+  Timezone-independent now.
+  ────────────────────────────────────────
+  Fix: F-14: empty lines: [] is invalid (orders.ts:66)
+  How I checked it: lines: [] plus an in-window edit
+  Result: ✅ INVALID_ORDER (no lines)
+  ────────────────────────────────────────
+  Fix: F-05: bundles: null (catalog.ts:54)
+  How I checked it: Probe
+  Result: ✅ Warns, then treats it as no bundles
+  ────────────────────────────────────────
+  Fix: A stopped run keeps its warnings (errors.ts, router.ts:15-20, main.ts:45)
+  How I checked it: Every warehouse with enabled: "true"
+  Result: ✅ The error now carries the "non-boolean enabled" warning
+  ────────────────────────────────────────
+  Fix: BOM stripped (main.ts:15)
+  How I checked it: Read the bytes
+  Result: ✅ The regex really contains U+FEFF (EF BB BF)
+  ────────────────────────────────────────
+  Fix: Stale routes.txt removed on a stop (main.ts:47)
+  How I checked it: Read the code
+  Result: ✅ Only for RoutingStopped (see problem 3)
+  ────────────────────────────────────────
+  Fix: test-plan R1-7
+  How I checked it: Read
+  Result: ✅ Now agrees with D-06
+
+  The other findings from my first review are now recorded in decisions.md as
+  accepted known issues K-01 to K-04, so I'm not reporting them again.
+
+  3. New problems
+
+  1. The golden test will fail after a fresh checkout on this machine.
+     - Cause: core.autocrlf=true is set in C:/Program Files/Git/etc/gitconfig,
+       and the repo has no .gitattributes. Git already warns: "in the working 
+       copy of 'tests/golden/routes.txt', LF will be replaced by CRLF the next 
+       time Git touches it".
+     - tests/acceptance.test.ts:21 compares output joined with \n against the
+       raw file. After a commit and a fresh clone (or git checkout of that
+       file), the golden file has \r\n endings and ACC-1 fails even though the
+       code is correct.
+     - Input that breaks it: commit, then clone the repo on this machine and run
+       npm test.
+     - I couldn't reproduce it in a scratch repo (blocked), so this conclusion
+       comes from git's own warning plus the config.
+  2. F-11 accepts impossible calendar dates.
+     - Where: src/orders.ts:8 and :127. The regex only checks the shape, and
+       Date.parse silently rolls invalid days over: 2026-02-30 becomes Mar 2,
+       and 2026-04-31 becomes May 1.
+     - F-11 says "ISO 8601", and Feb 30 isn't a valid ISO 8601 date.
+     - Input that breaks it: order created at 2026-03-02T13:00:00Z, with an edit
+       stamped 2026-02-30T13:10:00Z. The edit is merged with no warning, and
+       the order moves from WH-NJ to WH-GA. It should be ignored as unreadable.
+  3. The stale-routes.txt fix only covers planned stops, not crashes.
+     - Where: src/main.ts:44. Any error that isn't a RoutingStopped is re-thrown
+       before rmSync on line 47.
+     - Input that breaks it: a good run, then an orders.json with about 130k
+       orders (the K-02 RangeError in format.ts). The run crashes and the old
+       routes.txt stays there, looking current. K-02 accepts the crash, but not
+       this side effect.
+  4. One row in decisions.md breaks the Known issues table.
+     - Where: docs/decisions.md:245-246. The K-04 row contains a real line break
+       inside a code span (meant as the escape \n). That breaks the table, so
+       K-04's text and the whole K-05 row show up as plain paragraphs.
+
+  Smaller points:
+  - Decision gap (F-09 + F-13 vs D-00). An order with bad data whose route is
+    decided earlier by a rule gets no warning. Example: an unreadable at with
+    country CA goes to INTERNATIONAL with no warning, so the bad timestamp is
+    never reported.
+  - Invisible character in the code (main.ts:15). The BOM regex is an invisible
+    literal character. It works, but no reviewer can see it, and an editor that
+    strips BOM-like characters would quietly turn it into /^/. Writing \uFEFF
+    makes it visible and safe.
+
+  4. What could break with no test failing
+
+  The golden test now protects a lot: bundle expansion, D-03 on #2045, D-01 on
+  #2033, edit slot timing (D-14), rule 5 output, and D-10 (the printed covers
+  would change). It also checks that the real data raises no warnings. These are
+  still unprotected:
+  - New fixes with no test at all:
+    - F-11: reverting to plain Date.parse passes, because every test timestamp
+      has a Z. The decisions.md K-05 list doesn't mention F-11 either.
+    - F-13: deleting the warning loop in router.ts:30-32 passes. The acceptance
+      test only checks that there are no warnings.
+    - F-14, F-05 null, and warnings carried by a stop.
+    - The CLI: BOM stripping, stale-file removal, and where routes.txt is
+      written (D-17).
+  - Rule 6: it never fires in today's data, so swapping NV and TX in PRIORITY
+    passes. The rule-6 output format (=, priority), 3-way ties and > between
+    covers that print the same are also untested.
+  - D-11: treating velocity 0 as cover 0 passes, because WH-TX is disabled and
+    the fixtures use velocity 1.
+  - D-09: dropping the summing of a repeated SKU passes, because neither the
+    data nor the tests repeat a SKU.
+  - D-06: NO_COUNTRY, the alias UNITED STATES OF AMERICA, and F-01's whitespace
+    collapsing are untested.
+  - D-13: creations with equal timestamps and F-07 (unreadable creation times go
+    last) are untested.
+  - Also untested: D-02 nested or invalid bundles, D-05, D-08, D-14 edge cases
+    (before creation, unreadable time, unknown order), D-18 to D-22, and F-06.
+
+  I updated the review memory with what was fixed and what's still open.
+
+  ---
+
+  English notes (the prompt repeats the same points as last time, so these are
+  short)
+  - "like you would have to approve it" → "as if you had to approve it".
+  - "detail oriented.focus" needs a space after the period, and the next
+    sentence starts with a capital letter: "detail-oriented. Focus…". The same
+    goes for "Also…" and "Before…".
+  - Well done: "check that the fixes are right and didn't break anything else"
+    is clear and natural, and "just like before" works well for linking to the
+    earlier request.
+
+✻ Churned for 3m 5s · done 17:42
+
+※ recap: Goal: approve the Part A order router for production; the re-review found the fixes correct and routes.txt matching my hand calculation, with four new problems. Next, you decide what to fix, starting with the golden file's CRLF line endings that will break the acceptance test. (disable recaps in /config)
+
+❯ The session that implemented the test has analysed everything and this is     
+  it's response, analyse carefully everything, in details and confirm if you    
+  agree on everything:                                                          
+  I confirmed all four problems and both smaller points, and I agree with every 
+  finding. Two of them are my own mistakes in how I wrote characters into       
+  files (problem 4 and the invisible BOM character). None of these changes a    
+  route in today's data, and I haven't changed anything.                        
+                                                                                
+  New problems                                                                  
+                                                                                
+  ┌─────┬───────────────────────┬───────────┬────────────────────────────────── 
+  ────────────────────────────────────────────────────────────────────┬──────── 
+  ────────────────────────────────────────────────┐                             
+  │  #  │        Finding        │  Agree?   │                                   
+           What I checked                                            │          
+              Fix and effort                     │                              
+  ├─────┼───────────────────────┼───────────┼────────────────────────────────── 
+  ────────────────────────────────────────────────────────────────────┼──────── 
+  ────────────────────────────────────────────────┤                             
+  │     │ The golden test fails │           │ core.autocrlf=true comes from     
+  C:/Program Files/Git/etc/gitconfig, and there's no .gitattributes.     │ Add  
+  a .gitattributes with * text=auto eol=lf. That     │                          
+  │ 1   │  after a fresh        │ Yes       │ After a checkout, Git writes the  
+  golden file with CRLF line endings, but the test builds the output  │ keeps   
+  every file LF on every machine, including the    │                            
+  │     │ checkout              │           │ with LF, so the test fails even   
+  though the code is right.                                            │        
+  routes.txt we submit. ~2 min                           │                      
+  ├─────┼───────────────────────┼───────────┼────────────────────────────────── 
+  ────────────────────────────────────────────────────────────────────┼──────── 
+  ────────────────────────────────────────────────┤                             
+  │     │ Impossible dates are  │           │ 2026-02-30T13:10:00Z → March 2    
+  and 2026-04-31 → May 1. Only the day of the month rolls over: month   │ After 
+  parsing, check that the day exists in that month │                            
+  │ 2   │ accepted              │ Yes       │ 13 and hour 25 are already        
+  rejected. F-11 says ISO 8601, and Feb 30 isn't a valid ISO date, so this  │   
+  and year. ~10 min                                     │                       
+  │     │                       │           │ is a bug in the code, not a new   
+  decision.                                                            │        
+                                                  │                             
+  ├─────┼───────────────────────┼───────────┼────────────────────────────────── 
+  ────────────────────────────────────────────────────────────────────┼──────── 
+  ────────────────────────────────────────────────┤                             
+  │     │ routes.txt is only    │           │ The catch re-throws any other     
+  error before it reaches rmSync. A crash (for example K-02) leaves the  │      
+  Delete routes.txt at the start of the run and write it │                      
+  │ 3   │ removed on planned    │ Yes       │ old file looking current.         
+                                                                     │  only    
+  on success. That covers stops and crashes with   │                            
+  │     │ stops                 │           │                                   
+                                                                     │ no       
+  extra code paths. ~2 min                            │                         
+  ├─────┼───────────────────────┼───────────┼────────────────────────────────── 
+  ────────────────────────────────────────────────────────────────────┼──────── 
+  ────────────────────────────────────────────────┤                             
+  │ 4   │ K-04 breaks the Known │ Yes, my   │ Line 246 of decisions.md starts   
+  with the leftover of K-04: the \n I meant to write as two characters │ Write  
+  it as \n text inside the code span. ~1 min       │                            
+  │     │  issues table         │ mistake   │  became a real line break.        
+                                                                     │          
+                                                 │                              
+  └─────┴───────────────────────┴───────────┴────────────────────────────────── 
+  ────────────────────────────────────────────────────────────────────┴──────── 
+  ────────────────────────────────────────────────┘                             
+                                                                                
+  Smaller points                                                                
+                                                                                
+  - Bad data reported only when it decides the route. I agree it's a gap, but   
+  I'd document it rather than fix it now. The destination is always correct: an 
+  order with an unreadable at and country CA goes to PARTNER either way. The    
+  only problem is that the bad timestamp goes unreported. A proper fix means    
+  checking data problems separately from the rules, including the catalog       
+  check, which never runs for international orders. That's about 15 minutes and 
+  touches orders.ts, route.ts and router.ts. I'd record it as K-06.             
+  - Invisible BOM character in main.ts. Yes, my mistake. I meant to write       
+  \uFEFF as an escape, but the bytes show the literal character (357 273 277 =  
+  EF BB BF). An editor could strip it without anyone noticing, and the regex    
+  would then match nothing. Fix: write the escape in plain ASCII and check the  
+  bytes afterwards. ~1 min.                                                     
+                                                                                
+  Gaps in test coverage                                                         
+                                                                                
+  I agree with the list. One correction to decisions.md: K-05 mentions F-11     
+  only indirectlname, and it doesn't list the CLI behavior at all (BOM          
+  stripping, removing routes.txt,where routes.txt is written). I'd list both by 
+  name.                                                                         
+                                                                                
+  I'd make one exception to the test cut: F-11. It fixes the most serious bug   
+  found so far nothing protects it: going back to plain Date.parse passes every 
+  test. Two fixture testswould cover it, about 5 minutes with the existing      
+  helpers:                                                                      
+  - an edit with no timezone is ignored;                                        
+  - an edit dated 2026-02-30 is ignored.                                        
+                                                                                
+  All the other gaps stay in K-05.                                              
+                                                                                
+  Recommendation                                                                
+                                                                                
+  1. Fix now (~20 min): 1, 2, 3, 4 and the BOM escape. Then re-run tsc, the     
+  tests and the golden-file comparison.                                         
+  2. Test now (~5 min): the two F-11 tests, if you accept the exception.        
+  3. Document: add K-06 (bad data that isn't the deciding reason gets no        
+  warning), and name F-11 and the CLI behavior in K-05.                         
+                                                                                
+  Two of these mistakes have the same cause: escape sequences I typed turned    
+  into real chaile. From now on I'll check the bytes after writing any escape   
+  sequence. Your global rules say to log patterns like this in gotchas.md. That 
+  file doesn't exist yet, so I'll create it unless you'd rather keep it in      
+  memory only.                                                                  
+
+● I'll check the claims I can verify instead of taking them on trust. First, the
+  claim that "only the day of the month rolls over".
+
+  Ran 1 shell command, wrote 1 memory (ctrl+o to expand)
+
+● I agree with the diagnosis of all six findings and with the plan. But I
+  wouldn't approve two parts as written: the F-11 date check could reject valid
+  timestamps, and one of the two proposed F-11 tests passes on your machine even
+  with the bug put back.
+
+  The four problems
+
+  1. Line endings (golden file): I agree.
+  - * text=auto eol=lf forces LF on checkout no matter what core.autocrlf says.
+  - The repo has no commits yet, so adding .gitattributes before the first
+    commit is enough. Nothing needs to be renormalized.
+
+  2. Impossible dates: I agree it's a code bug, but their claim needs one 
+  correction and the fix has a trap. I tested the regex together with
+  Date.parse:
+
+  ┌──────────────────────────────────────────────┬──────────────────────────┐
+  │                    Input                     │          Result          │
+  ├──────────────────────────────────────────────┼──────────────────────────┤
+  │ month 13, month 00, day 00, day 32, hour 25, │ rejected ✅              │
+  │  minute 60, second 60, +24:00, 24:00:01      │                          │
+  ├──────────────────────────────────────────────┼──────────────────────────┤
+  │ 2026-02-29, 2100-02-29                       │ accepted, rolls over to  │
+  │                                              │ Mar 1 ❌                 │
+  ├──────────────────────────────────────────────┼──────────────────────────┤
+  │ 2028-02-29                                   │ accepted, which is       │
+  │                                              │ correct (leap year)      │
+  ├──────────────────────────────────────────────┼──────────────────────────┤
+  │ 2026-10-20T24:00:00Z                         │ accepted, becomes Oct 21 │
+  │                                              │  00:00                   │
+  ├──────────────────────────────────────────────┼──────────────────────────┤
+  │                                              │ accepted, which is       │
+  │ 2026-03-01T01:00:00+05:00                    │ correct, but in UTC it's │
+  │                                              │  Feb 28 20:00            │
+  └──────────────────────────────────────────────┴──────────────────────────┘
+
+  - Correction: "Only the day of the month rolls over" is almost right. 24:00:00
+    also rolls over. ISO 8601 allows 24:00 as "end of day", so accepting it may
+    be fine, but it's a decision. Whatever they pick should be written into
+    F-11.
+  - The trap: "After parsing, check that the day exists" must check the date as 
+    written (year, month and day from the string, with leap-year rules). It must
+    not compare against the parsed UTC date. That comparison would reject the
+    valid 2026-03-01T01:00:00+05:00, which is Feb 28 in UTC. It would also
+    reject 24:00.
+
+  3. Stale routes.txt: I agree, with two notes.
+  - The delete has to come before the readJson calls. Those run inside the
+    routeOrders(...) argument at main.ts:27-32, so the delete belongs at the top
+    of main().
+  - The rmSync in the catch at line 47 should then be removed, so there's only
+    one path.
+  - Choice for you (minimal vs. robust): if writeFileSync fails halfway (for
+    example, a full disk), a partial routes.txt is still left behind. Writing to
+    a temp file and then renaming it closes that gap. It's about 3 more lines,
+    and it guards against something that hasn't happened.
+
+  4. K-04 row: I agree. I checked the bytes: line 246 starts with the leftover
+  of a real line break.
+
+  The two smaller points
+
+  - K-06 (bad data that isn't the deciding reason gets no warning): their
+    reasoning is correct. F-09 puts rules 1 and 2 first, and both always send
+    the order to PARTNER. So the destination never changes, and only the warning
+    is missing. Documenting it instead of fixing it is a choice between minimal
+    and robust, so it's yours to make. I'm fine either way.
+  - BOM character: I agree. One small correction: if the invisible character
+    were stripped, the regex would become /^/. That matches the empty string and
+    removes nothing, so it doesn't "match nothing". The effect is the same,
+    though: the BOM stays.
+
+  Test coverage: I agree with one correction to their claim
+
+  - They say K-05 "doesn't list the CLI behavior at all". It does: points 9
+    (stale routes.txt) and 10 (BOM) are named, but only in the sentence about
+    what was "checked by reading the code". They're not listed as untested.
+    What's really missing is D-17 (where routes.txt is written).
+  - K-05 also leaves out F-01, the UNITED STATES OF AMERICA alias and F-11.
+  - It also overstates two gaps: the golden test already protects D-10 and the
+    rule-5 part of D-15.
+
+  The F-11 tests as proposed would not protect the fix
+
+  - "An edit with no timezone is ignored" passes on your machine even with the 
+    old code. The old Date.parse reads 2026-10-20T13:10:00 as local time. Here
+    (UTC−3) that's 16:10Z, which is outside the window, so the edit is ignored
+    anyway. The test only catches the regression on a machine near UTC.
+    - Instead, test a creation with no offset → INVALID_ORDER. The old code
+      would route that order in any timezone, so the test fails if the fix is
+      removed.
+  - "An edit dated 2026-02-30 is ignored" depends on the creation date. The
+    fixtures start on Oct 20, so a Feb 30 edit is "before the creation" and gets
+    ignored even with the bug. It only works if the creation is on Mar 1 or
+    Mar 2.
+    - Simpler: a creation dated 2026-02-30 → INVALID_ORDER.
+  - Add two cases that must be accepted, so the date-check fix can't
+    overcorrect:
+    - 2026-03-01T01:00:00+05:00
+    - 2028-02-29T…Z
+
+  gotchas.md
+
+  - Asking first was right; it matches your "ask before new docs files" rule.
+  - Decide where it lives. In the repo root, it gets published with the
+    submission that Sean will see. If you want it private, put it in .gitignore
+    or outside the repo. The lesson itself ("check the bytes after writing an
+    escape sequence") is a good one.
+
+  Other notes
+
+  - Garbled text in the reply. Their response has damaged words:
+    "indirectlname", "routes.txt,where", "testswould", "real chaile", and "so
+    far nothing protects it" with the punctuation missing. These are probably
+    copy artifacts, and I read them as intended. But since the root cause they
+    describe is characters getting mangled when written, it's worth a byte check
+    on the files they edit next.
+  - Plan and time estimates. Their order (fix, then test, then document) and the
+    estimates look reasonable. I saved these caveats to the review memory.
+
+  ---
+
+  English notes
+  - "this is it's response" → "this is its response". It's means "it is"; the
+    possessive its has no apostrophe.
+  - "analyse carefully everything, in details" → "analyse everything carefully, 
+    in detail". Don't put an adverb between the verb and its object, and the
+    fixed phrase is "in detail" (singular).
+  - "confirm if you agree on everything" → "confirm whether you agree with
+    everything". You agree with a statement or person; you agree on a plan you
+    decide together.
+  - Well done: "The session that implemented the test has analysed everything"
+    uses the relative clause and the present perfect correctly. "Analysed" is
+    the British spelling; American English writes "analyzed". Both are fine, as
+    long as you use one consistently.
+✻ Cooked for 1m 40s · done 17:50
+
+※ recap: You're reviewing the order router for production; the other session's fix plan is right, except its F-11 date check and two proposed tests need changes. Next, you decide which fixes and tests to approve, and where gotchas.md should live. (disable recaps in /config)
